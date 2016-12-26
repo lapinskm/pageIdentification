@@ -1,195 +1,175 @@
 library(stringi)
 library(base)
 library(plyr)
+library(htmltidy)
+library(xml2)
+library(compiler)
+
 library(randomForest)
+library(e1071)
+
+tagNames=c('img', 'video', 'audio', 'script', 'style',
+           'article', 'canvas', 'blockquote', 'span',
+           'input', 'form', 'object', 'meta', 'link',
+           #'table', 'h1', 'h2', 'h3', 'li', 'ul', 'tr', 
+           'hr', 'a', 'b', 'p', 'i')
+
+wordCountRegexes=c("password|login|username|użytkownik|zaloguj|hasło",
+                   "forum|post|awatat|avatar|quote",
+                   #"vid|wideo|film",#
+                   #"audio|music|muzyka",#
+                   "zdjęcie|zdjęcia|foto|photo",
+                   "pic|picture|image|obraz",
+                   "artykuł|article",
+#                   "tekst|text",
+                   "portal",
+                   "blog",
+#                   "galeria|galery",
+                   "news|wiadomości|informacje",
+                   "kontakt|contact",
+#                   "buy|kup|cena|koszyk|price",
+#                   "place|miejsce|ulica|lokalizacja",
+#                   "share|udostępnij|prześlij",
+                   "email|e-mail|poczta|sendto",
+                   "bank|ubezpieczen|kredyt|praw",
+                   "bizn|praw|pieni|money|inwest"#,
+                   #"ad|reklama",
+                   #"zdrowie|medycyna|health",
+                   #"uroda|kosmetyki|beauty",
+                   #"play|odtwórz"
+                   )
+
+
 
 extractFeatures<-function(filename)
 {
   con <- file(filename, "r")
   descrLines <- readLines(con,n=2)
+  
   close(con)
   category   <- strsplit(descrLines[1]," ")[[1]][1]
   url        <- descrLines[2]
-  #Features are maked by "###" at the end of line
+  #Features are maked by "###" at the end of line for convinience
   
-  urlSize <- stri_length(url)                               ###
   x <- readChar(filename, file.info(filename)$size)
-  x <- tolower(x)
   
-  pageSize=stri_length(x)                                   ###
+  # remove first two lines containing metadata
+
+  x<-stri_replace_first_regex(x,"^.*?\n.*?\n", "" )
+  dirtyPageSize<-stri_length(x)                            ###
+  #html might be malformed
+  x<-tidy_html(x)
+  cleanPageSize<-stri_length(x)                            ###
+  #get tag statistics
+  x_html <- read_html(x)
+  allNodes <- xml_find_all(x_html,"//*")
+  totalTagCount <- length(allNodes)                        ###
   
-  title<-stri_subset_regex(x, "<title></title>")
-  titleBlog    <-grepl(pattern = "blog",           x = title, ignore.case = T )  ###
-  #titleForum   <-grepl(pattern = "forum",          x = title, ignore.case = T )  ###
-  #titleGallery <-grepl(pattern = "gallery|galeria",x = title, ignore.case = T )  ###
-  titlePage    <-grepl(pattern = "page|strona",    x = title, ignore.case = T )  ###
-  titlePortal  <-grepl(pattern = "portal",         x = title, ignore.case = T )  ###
-
-
-  imgTagCount<-stri_count_fixed(x, "<img")               ###
-  vidTagCount<-stri_count_fixed(x, "<video")             ###
-  audTagCount<-stri_count_fixed(x, "<audio")             ###
-  artTagCount<-stri_count_fixed(x, "<article")           ###
-  canTagCount<-stri_count_fixed(x, "<canvas")            ###
-  quoTagCount<-stri_count_fixed(x, "<blockquote")        ###
-  spaTagCount<-stri_count_fixed(x, "<span")              ###
-  scrTagCount<-stri_count_fixed(x, "<script")            ###
-  cssTagCount<-stri_count_fixed(x, "<style")             ###
-  inpTagCount<-stri_count_fixed(x, "<input")             ###
-  forTagCount<-stri_count_fixed(x, "<form")              ###
-  objTagCount<-stri_count_fixed(x, "<object")            ###
-  divTagCount<-stri_count_fixed(x, "<div")               ###
-  metTagCount<-stri_count_fixed(x, "<meta")              ###
-
-  #some should be releative to size of site - it is the reason for dividing by pageSize 
-  imgTagRelCount<-imgTagCount/pageSize       ###
-  vidTagRelCount<-vidTagCount/pageSize       ###
-  audTagRelCount<-audTagCount/pageSize       ###
-#  artTagRelCount<-artTagCount/pageSize       ###
-#  canTagRelCount<-canTagCount/pageSize       ###
-#  quoTagRelCount<-quoTagCount/pageSize       ###
-#  spaTagRelCount<-spaTagCount/pageSize       ###
-#  scrTagRelCount<-scrTagCount/pageSize       ###
-#  cssTagRelCount<-cssTagCount/pageSize       ###
-#  inpTagRelCount<-inpTagCount/pageSize       ###
-#  forTagRelCount<-forTagCount/pageSize       ### 
-  objTagRelCount<-objTagCount/pageSize       ### 
-  divTagRelCount<-divTagCount/pageSize       ###
-
-
-  h1TagCount<-stri_count_fixed(x, "<h1") / pageSize         ###
-  h2TagCount<-stri_count_fixed(x, "<h2") / pageSize         ###
-  h3TagCount<-stri_count_fixed(x, "<h3") / pageSize         ###
-  liTagCount<-stri_count_fixed(x, "<li") / pageSize         ###
-  trTagCount<-stri_count_fixed(x, "<tr") / pageSize         ###
-
-  aTagCount<-stri_count_fixed(x, "<a")/pageSize             ###
-  bTagCount<-stri_count_fixed(x, "<b")/pageSize             ###
-  pTagCount<-stri_count_fixed(x, "<p")/pageSize             ###
-  iTagCount<-stri_count_fixed(x, "<i")/pageSize             ###
-
-  tc=gsub("<.*?>", "",x); # tagless content
-  rm(x) # not needed anymore
-
-  taglessSize <- stri_length(tc)                    ###
-  taglessToTotalRatio= taglessSize / pageSize       ###
-
-  loginWrdCount<-stri_count_regex(tc,"password|login|username|użytkownik|zaloguj|hasło")    ###
-  forumWrdCount<-stri_count_regex(tc,"forum|post|awatat|avatar|quote")                      ###
-  videoWrdCount<-stri_count_regex(tc,"video|wideo|film")                                    ###
-  audioWrdCount<-stri_count_regex(tc,"audio|music|muzyka")                                  ###
-  articWrdCount<-stri_count_regex(tc,"artykuł|article")                                     ###
-  textsWrdCount<-stri_count_regex(tc,"tekst|text")                                          ###
-  portlWrdCount<-stri_count_regex(tc,"portal")                                              ###
-  newsyWrdCount<-stri_count_regex(tc,"news|wiadomości|informacje")                          ###
-  sportWrdCount<-stri_count_regex(tc,"sport|piłka")                                         ###
-  fontyWrdCount<-stri_count_regex(tc,"font")                                                ###
-  #facebWrdCount<-stri_count_regex(tc,"facebook")                                           ###
-  #googlWrdCount<-stri_count_regex(tc,"goole")                                              ###
-  #youtuWrdCount<-stri_count_regex(tc,"youtube")                                            ###
-  #twittWrdCount<-stri_count_regex(tc,"twitter")                                            ###
-  contaWrdCount<-stri_count_regex(tc,"kontakt|contact")                                     ###
-  shopsWrdConut<-stri_count_regex(tc,"kup|cena|koszyk|price")                               ###
-  placeWrdCount<-stri_count_regex(tc,"place|miejsce|ulica|lokalizacja")                     ###
-  shareWrdCount<-stri_count_regex(tc,"share|udostępnij|prześlij")                           ###
-  mailsWrdCount<-stri_count_regex(tc,"email|e-mail|poczta|sendto")                          ###
-  banksWrdCount<-stri_count_regex(tc,"bank|ubezpieczen|kredyt|praw")                        ###
-  biznsWrdCount<-stri_count_regex(tc,"bizn|praw|pieni|money|inwest")                        ###
-  adverWrdCount<-stri_count_regex(tc,"ad|reklama")                                          ###
+  childrenCountSum <-0
+  leaveCount <- 0 #childless nodes                         ###
+  for(i in 1:totalTagCount[1]) {
+    childCount <- length(xml_children(allNodes[i][1]))
+    if (childCount != 0) {
+       childrenCountSum <- childrenCountSum + 1;
+    } else {
+      leaveCount <-leaveCount +1;
+    }
+  }
+  meanChildCount <- childrenCountSum/totalTagCount         ###
   
+  tagCounts = laply(tagNames,
+                    function(tagName) {
+                      length(xml_find_all(x_html, paste0("//", tagName)))
+                    }
+                   )
+  
+  totalTaglessSize <- stri_length(xml_text(x_html))        ###
+  cssNodes <- xml_find_all(x_html, "//style")
+  jsNodes <- xml_find_all(x_html, "//script")
+  headNodes <- xml_find_all(x_html, "//head")
+  
+  
+  inlineCssSize <- sum(stri_length(xml_text(cssNodes)))    ###
+  inlineJsSize <- sum(stri_length(xml_text(jsNodes)))      ###
+  taglessHeadSize <- sum(stri_length(xml_text(headNodes))) ###
+  
+  #remove not displayed directly nodes to continue processing
+  if(length(jsNodes))
+     xml_remove(jsNodes)
+  if(length(cssNodes))
+     xml_remove(cssNodes)
+  if(length(headNodes))
+    xml_remove(headNodes)
+    
+  displayedText <- xml_text(x_html)
+  displayedTextSize <- stri_length(displayedText)              ###
+  
+  displToTotalRatio <- displayedTextSize / cleanPageSize       ###
+  headToTotalRatio <- taglessHeadSize / cleanPageSize          ###
+
+  wordCounts<-stri_count_regex(displayedText, wordCountRegexes)###
 
   #ostatecznie formujemy wektor cech                       
-  c(taglessSize,
-    pageSize,
-    urlSize,
-    taglessToTotalRatio, 
-
-    titleBlog,
-    #titleForum,
-    #titleGallery,
-    #titlePage,
-    titlePortal,
-
-    imgTagCount,
-    vidTagCount,
-    audTagCount,
-    artTagCount,
-    canTagCount,
-    quoTagCount,
-    spaTagCount,
-    scrTagCount,
-    cssTagCount,
-    inpTagCount,
-    forTagCount,
-    #objTagCount,
-    #divTagCount,
-    metTagCount,
+  c(dirtyPageSize,
+    cleanPageSize,
+    totalTaglessSize,
+    inlineCssSize,
+    inlineJsSize,
+    taglessHeadSize,
+    displayedTextSize,
     
-    imgTagRelCount,
-    vidTagRelCount,
-    audTagRelCount,
-    #artTagRelCount,
-    #canTagRelCount,
-    #quoTagRelCount,
-    #spaTagRelCount,
-    #scrTagRelCount,
-    #cssTagRelCount,
-    #inpTagRelCount,
-    #forTagRelCount,
-    objTagRelCount,
-    divTagRelCount,
-
-    h1TagCount,
-    h2TagCount,
-    h3TagCount,
-    liTagCount,
-    trTagCount,
-    aTagCount,
-    bTagCount,
-    pTagCount,
-    iTagCount,
-    loginWrdCount,
-    forumWrdCount,
-    videoWrdCount,
-    audioWrdCount,
-    articWrdCount,
-    portlWrdCount,
-    newsyWrdCount,
-    fontyWrdCount,
-    #facebWrdCount,
-    #googlWrdCount,
-    #youtuWrdCount,
-    #twittWrdCount,
-    contaWrdCount,
-    shopsWrdConut,
-    placeWrdCount,
-    shareWrdCount,
-    mailsWrdCount,
-    banksWrdCount,
-    biznsWrdCount,
-    adverWrdCount,
+    headToTotalRatio,
+    displToTotalRatio,
+    
+    #tagCounts,
+    tagCounts/totalTagCount, # relative tag counts
+    totalTagCount,
+    meanChildCount,
+    leaveCount,
+    
+    wordCounts,
     category);
 }
+extractFeatures_ <- cmpfun(extractFeatures)
 
 #read list of files
 
 filenames <- paste0("train/",list.files("train/"))
 
 #extact feature vectors from raw data
-data = ldply(.data =  filenames, .fun = extractFeatures)
+data = ldply(.data =  filenames, .fun = extractFeatures_)
 
 #Split data to learning and test sets
 dataSize <- nrow(data)
 vectSize <- ncol(data)
 
-testIdx  <- sample(dataSize,dataSize*0.3)
+testIdx  <- sample(dataSize,dataSize * 0.3)
 test <- data[testIdx, ]
 learn <- data[-testIdx, ]
 
+
+#dane
+x <- learn[, 1:vectSize-1]
+y <- as.factor(learn[, vectSize])
+
+xtest <- test [, 1:vectSize-1]
+ytest <- as.factor(test [, vectSize])
+
+x_matrix     <- data.matrix(x)
+xtest_matrix <- data.matrix(xtest)
+
+
+#svm_model <- svm(x=x_matrix, y=y, gamma = 0.01)
+#ytest_pred    <- predict(svm_model, xtest_matrix)
+#y_pred   <- predict(svm_model, x_matrix)
+
+#sum(rep(1,length(y_pred)) [y_pred == y])/length(y_pred)
+#sum(rep(1,length(ytest_pred)) [ytest_pred == ytest])/length(ytest_pred)
+
 #Teach forest
-forest = randomForest(x = learn[, 1:vectSize-1]   ,y=as.factor(learn[, vectSize]),
-             xtest = test[, 1:vectSize-1], ytest<-as.factor(test[,vectSize]), ntree=2000, keep.forest = TRUE  )
-forest
+forest = randomForest(x, y, xtest, ytest, ntree=2000, keep.forest = TRUE)
+forest 
 
 #jakie zmienne były istotne
 forest$importance
+failed = filenames [data[, vectSize] == forest$predicted[filenames] ] 
